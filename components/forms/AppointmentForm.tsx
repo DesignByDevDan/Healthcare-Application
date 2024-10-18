@@ -8,10 +8,7 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { SelectItem } from "@/components/ui/select";
 import { Doctors } from "@/constants";
-import {
-  createAppointment,
-  updateAppointment,
-} from "@/lib/actions/appointment.actions";
+import { getPatient, createAppointment, updateAppointment } from "@/lib/actions/appointment.actions";
 import { getAppointmentSchema } from "@/lib/validation";
 import { Appointment } from "@/types/appwrite.types";
 
@@ -20,7 +17,6 @@ import "react-datepicker/dist/react-datepicker.css";
 import CustomFormField, { FormFieldType } from "../CustomFormField";
 import SubmitButton from "../SubmitButton";
 import { Form } from "../ui/form";
-import { CANCELLED } from "dns";
 
 export const AppointmentForm = ({
   type = "create",
@@ -45,7 +41,9 @@ export const AppointmentForm = ({
     defaultValues: {
       primaryPhysician: appointment ? appointment?.primaryPhysician : "",
       schedule: appointment
-        ? new Date(appointment?.schedule!)
+        ? appointment.schedule
+          ? new Date(appointment.schedule)
+          : new Date()
         : new Date(Date.now()),
       reason: appointment ? appointment.reason : "",
       note: appointment?.note || "",
@@ -53,12 +51,11 @@ export const AppointmentForm = ({
     },
   });
 
+  const onSubmit = async (values: z.infer<typeof AppointmentFormValidation>) => {
+    console.log("Form Submitted", values);
 
-  const onSubmit = async (
-    values: z.infer<typeof AppointmentFormValidation>
-  ) => {
     setIsLoading(true);
-  
+
     let status;
     switch (type) {
       case "schedule":
@@ -71,16 +68,17 @@ export const AppointmentForm = ({
         status = "pending";
         break;
     }
-    
+
     try {
       if (type === "create" && patientId) {
-        // Fetch the patient data before creating an appointment
-        const patient = await getPatient(patientId);  // Assuming userId is used to fetch the patient
-  
+        // Fetch patient data before proceeding
+        console.log("Fetching patient with ID:", patientId);
+        const patient = await getPatient(patientId);
+
         if (!patient) {
-          console.error("No patient found for the given userId.");
-          setIsLoading(false);  // Stop loading
-          return;  // Exit the function if no patient is found
+          console.error("Cannot create appointment, patient not found.");
+          setIsLoading(false);
+          return; // Exit if patient is not found
         }
 
         const appointmentData = {
@@ -92,26 +90,27 @@ export const AppointmentForm = ({
           status: status as Status,
           note: values.note,
         };
-  
-        // Add logs before creating the appointment
-        console.log("Appointment Data:", appointmentData); // Log appointment data before creation
-  
-        const appointment = await createAppointment(appointmentData); // Attempt to create the appointment
-        
-  
-        // Add logs after creating the appointment
-        console.log("Appointment created:", appointment); // Log the created appointment
-  
-        if (appointment && appointment.$id) {
+
+        console.log("Appointment Data:", appointmentData); // Log data before creation
+
+        const newAppointment = await createAppointment(appointmentData);
+        console.log("Appointment created:", newAppointment);
+
+        if (newAppointment && newAppointment.$id) {
           form.reset();
-          router.push(
-            `/patients/${userId}/new-appointment/success?appointmentId=${appointment.$id}`
-          );
+          router.push(`/patients/${userId}/new-appointment/success?appointmentId=${newAppointment.$id}`);
         }
-      } else {
+      } else if (type !== "create" && appointment) {
+        // Ensure we have an appointmentId before trying to update
+        if (!appointment.$id) {
+          console.error("Cannot update appointment, missing appointment ID.");
+          setIsLoading(false);
+          return; // Exit if there's no appointment ID
+        }
+
         const appointmentToUpdate = {
           userId,
-          appointmentId: appointment?.$id!,
+          appointmentId: appointment.$id,
           timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           appointment: {
             primaryPhysician: values.primaryPhysician,
@@ -121,93 +120,25 @@ export const AppointmentForm = ({
           },
           type,
         };
-  
+
+        console.log("Appointment to be updated:", appointmentToUpdate);
+
         const updatedAppointment = await updateAppointment(appointmentToUpdate);
-  
+        console.log("Appointment updated:", updatedAppointment);
+
         if (updatedAppointment) {
-          setOpen && setOpen(false);
+          if (setOpen) {
+            setOpen(false);
+          }
           form.reset();
         }
       }
     } catch (error) {
-      console.log("Error creating/updating appointment:", error); // Log any errors
+      console.error("Error during appointment creation/updation:", error);
     }
-  
+
     setIsLoading(false);
   };
-  
-  
-
-  // const onSubmit = async (values: z.infer<typeof AppointmentFormValidation>) => {
-  //   console.log("Form Submitted", values);  // Ensure onSubmit is triggered
-    
-  //   setIsLoading(true);
-
-  //   let status;
-  //   switch (type) {
-  //     case "schedule":
-  //       status = "scheduled";
-  //       break;
-  //     case "cancel":
-  //       status = "canceled";
-  //       break;
-  //     default:
-  //       status = "pending";
-  //       break;
-  //   }
-
-  //   try {
-  //     if (type === "create" && patientId) {
-        
-
-  //       const appointmentData = {
-  //         userId,
-  //         patient: patientId,
-  //         primaryPhysician: values.primaryPhysician,
-  //         schedule: new Date(values.schedule),
-  //         reason: values.reason!,
-  //         status: status as Status,
-  //         note: values.note,
-  //       };
-        
-  //           console.log("Appointment Data:", appointmentData);  // Log data before creation
-
-  //           const appointment = await createAppointment(appointmentData);
-
-  //           console.log(appointment);
-
-  //       if (appointment && appointment) {
-  //         form.reset();
-  //         router.push(
-  //           `/patients/${userId}/new-appointment/success?appointmentId=${appointment.$id}`
-  //         );
-  //       }
-  //     } else {
-  //       const appointmentToUpdate = {
-  //         userId,
-  //         appointmentId: appointment?.$id!,
-  //         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-  //         appointment: {
-  //           primaryPhysician: values.primaryPhysician,
-  //           schedule: new Date(values.schedule),
-  //           status: status as Status,
-  //           cancellationReason: values.cancellationReason,
-  //         },
-  //         type,
-  //       };
-
-  //       const updatedAppointment = await updateAppointment(appointmentToUpdate);
-
-  //       if (updatedAppointment) {
-  //         setOpen && setOpen(false);
-  //         form.reset();
-  //       }
-  //     }
-  //   } catch (error) {
-  //     console.log(error);
-  //   }
-  //   setIsLoading(false);
-  // };
 
   let buttonLabel;
   switch (type) {
@@ -218,7 +149,7 @@ export const AppointmentForm = ({
       buttonLabel = "Schedule Appointment";
       break;
     default:
-      buttonLabel = "Submit Apppointment";
+      buttonLabel = "Submit Appointment";
   }
 
   return (
@@ -275,7 +206,7 @@ export const AppointmentForm = ({
                 control={form.control}
                 name="reason"
                 label="Appointment reason"
-                placeholder="Annual montly check-up"
+                placeholder="Annual monthly check-up"
                 disabled={type === "schedule"}
               />
 

@@ -3,75 +3,64 @@
 import { revalidatePath } from "next/cache";
 import { ID, Query } from "node-appwrite";
 
-import { Appointment } from "../../types/appwrite.types";
+import { Appointment } from "@/types/appwrite.types";
 
 import {
   APPOINTMENT_COLLECTION_ID,
-  PATIENT_COLLECTION_ID,
   DATABASE_ID,
+  PATIENT_COLLECTION_ID,
   databases,
   messaging,
 } from "../appwrite.config";
 import { formatDateTime, parseStringify } from "../utils";
 
-// GET PATIENT
-export const getPatient = async (patientId: string) => {
-  try {
-    const patient = await databases.getDocument(
-      DATABASE_ID!,
-      PATIENT_COLLECTION_ID!, 
-      patientId
-    );
-
-    return parseStringify(patient);
-  } catch (error) {
-    console.error("An error occurred while retrieving the patient:", error);
-    return null;  // Return null if patient is not found
-  }
-};
-
-//  CREATE APPOINTMENT
+// CREATE APPOINTMENT
 export const createAppointment = async (appointment: CreateAppointmentParams) => {
   try {
     console.log("Appointment data before creation:", appointment);
     const newAppointment = await databases.createDocument(
       DATABASE_ID!,
-      // APPOINTMENT_COLLECTION_ID!,
-      PATIENT_COLLECTION_ID!,
-      ID.unique(),  // Make sure this is generating a unique ID
-      appointment   // Ensure the structure matches the schema in Appwrite
+      APPOINTMENT_COLLECTION_ID!,
+      ID.unique(),
+      appointment
     );
 
     console.log("New Appointment Created:", newAppointment);
-
     revalidatePath("/admin");
     return parseStringify(newAppointment);
-  } catch (error) {
-    console.error("An error occurred while creating a new appointment:", error);
+  } catch (error: unknown) {
+    console.error("An error occurred while creating a new appointment:", (error as Error)?.message || error);
+    return null;
   }
 };
 
+// GET PATIENT
+export const getPatient = async (patientId: string) => {
+  try {
+    console.log("Fetching patient data for patientId:", patientId);
+    const patient = await databases.getDocument(
+      DATABASE_ID!,
+      PATIENT_COLLECTION_ID!,
+      patientId
+    );
 
-//  GET RECENT APPOINTMENTS
+    console.log("Patient data fetched:", patient);
+    return parseStringify(patient);
+  } catch (error: unknown) {
+    console.error("No patient found for the given userId:", patientId, "Error:", (error as Error)?.message || error);
+    return null;
+  }
+};
+
+// GET RECENT APPOINTMENTS
 export const getRecentAppointmentList = async () => {
   try {
+    console.log("Fetching recent appointment list...");
     const appointments = await databases.listDocuments(
       DATABASE_ID!,
       APPOINTMENT_COLLECTION_ID!,
       [Query.orderDesc("$createdAt")]
     );
-
-    const scheduledAppointments = (
-      appointments.documents as Appointment[]
-    ).filter((appointment) => appointment.status === "scheduled");
-
-    const pendingAppointments = (
-      appointments.documents as Appointment[]
-    ).filter((appointment) => appointment.status === "pending");
-
-    const canceledAppointments = (
-      appointments.documents as Appointment[]
-    ).filter((appointment) => appointment.status === "canceled");
 
     const initialCounts = {
       scheduledCount: 0,
@@ -103,32 +92,35 @@ export const getRecentAppointmentList = async () => {
       documents: appointments.documents,
     };
 
+    console.log("Recent appointments fetched successfully.");
     return parseStringify(data);
-  } catch (error) {
-    console.error(
-      "An error occurred while retrieving the recent appointments:",
-      error
-    );
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      console.error(
+        "An error occurred while retrieving the recent appointments:", error.message
+      );
+    } else {
+      console.error("An unknown error occurred while retrieving the recent appointments:", error);
+    }
+    return null;
   }
 };
 
-//  SEND SMS NOTIFICATION
+// SEND SMS NOTIFICATION
 export const sendSMSNotification = async (userId: string, content: string) => {
   try {
-    // https://appwrite.io/docs/references/1.5.x/server-nodejs/messaging#createSms
-    const message = await messaging.createSms(
-      ID.unique(),
-      content,
-      [],
-      [userId]
-    );
+    console.log("Sending SMS notification to userId:", userId);
+    const message = await messaging.createSms(ID.unique(), content, [], [userId]);
+
+    console.log("SMS sent successfully:", message);
     return parseStringify(message);
-  } catch (error) {
-    console.error("An error occurred while sending sms:", error);
+  } catch (error: unknown) {
+    console.error("An error occurred while sending SMS:", (error as Error)?.message || error);
+    return null;
   }
 };
 
-//  UPDATE APPOINTMENT
+// UPDATE APPOINTMENT
 export const updateAppointment = async ({
   appointmentId,
   userId,
@@ -137,7 +129,11 @@ export const updateAppointment = async ({
   type,
 }: UpdateAppointmentParams) => {
   try {
-    // Update appointment to scheduled -> https://appwrite.io/docs/references/cloud/server-nodejs/databases#updateDocument
+    if (!appointmentId) {
+      throw new Error("No appointmentId provided for update.");
+    }
+
+    console.log("Attempting to update appointment with ID:", appointmentId);
     const updatedAppointment = await databases.updateDocument(
       DATABASE_ID!,
       APPOINTMENT_COLLECTION_ID!,
@@ -145,32 +141,48 @@ export const updateAppointment = async ({
       appointment
     );
 
-    if (!updatedAppointment) throw Error;
+    if (!updatedAppointment) throw new Error("Failed to update appointment");
 
-    const smsMessage = `Greetings from CareConnect. ${type === "schedule" ? `Your appointment is confirmed for ${formatDateTime(appointment.schedule!, timeZone).dateTime} with Dr. ${appointment.primaryPhysician}` : `We regret to inform that your appointment for ${formatDateTime(appointment.schedule!, timeZone).dateTime} is canceled. Reason:  ${appointment.cancellationReason}`}.`;
+    const smsMessage = `Greetings from CarePulse. ${
+      type === "schedule"
+        ? `Your appointment is confirmed for ${formatDateTime(
+            appointment.schedule!,
+            timeZone
+          ).dateTime} with Dr. ${appointment.primaryPhysician}`
+        : `We regret to inform that your appointment for ${formatDateTime(
+            appointment.schedule!,
+            timeZone
+          ).dateTime} is cancelled. Reason:  ${appointment.cancellationReason}`
+    }.`;
     await sendSMSNotification(userId, smsMessage);
 
     revalidatePath("/admin");
+    console.log("Appointment updated successfully:", updatedAppointment);
     return parseStringify(updatedAppointment);
-  } catch (error) {
-    console.error("An error occurred while scheduling an appointment:", error);
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      console.error("An error occurred while scheduling an appointment:", error.message);
+    } else {
+      console.error("An unknown error occurred while scheduling an appointment:", error);
+    }
+    return null;
   }
 };
 
 // GET APPOINTMENT
 export const getAppointment = async (appointmentId: string) => {
   try {
+    console.log("Fetching appointment with appointmentId:", appointmentId);
     const appointment = await databases.getDocument(
       DATABASE_ID!,
       APPOINTMENT_COLLECTION_ID!,
       appointmentId
     );
 
+    console.log("Appointment fetched successfully:", appointment);
     return parseStringify(appointment);
-  } catch (error) {
-    console.error(
-      "An error occurred while retrieving the existing patient:",
-      error
-    );
+  } catch (error: unknown) {
+    console.error("An error occurred while retrieving the appointment:", (error as Error)?.message || error);
+    return null;
   }
 };
